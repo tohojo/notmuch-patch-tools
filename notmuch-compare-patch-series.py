@@ -38,6 +38,16 @@ def main(notmuch, *query):
 
     repo = git.Repo(REPO_PATH)
 
+    commits_seen = set()
+
+    # First pass to extract all commit IDs seen in the series
+    for p in patches:
+        pl = p.get_payload(decode=True).decode("utf-8")
+        m = re.search(r"^commit ([0-9a-f]{40})", pl, re.MULTILINE)
+        if m:
+            commits_seen.add(m.group(1))
+
+    # Second pass to do the actual processing
     for p in patches:
         pl = p.get_payload(decode=True).decode("utf-8")
         sb = re.sub(r"\s+", " ", p['Subject'].strip())
@@ -51,6 +61,7 @@ def main(notmuch, *query):
                 commit_prefix = pl[:m.start()]
                 c_sha = m.group(1)
                 c = repo.commit(c_sha) # fails if no commit exists
+
                 diff = repo.git.diff(c_sha + '~1', c_sha,
                                      ignore_blank_lines=True,
                                      ignore_space_at_eol=True)
@@ -58,8 +69,17 @@ def main(notmuch, *query):
 
                 diff_errs = []
 
-                upstream_dict = {f.path: f for f in ps_us}
                 downstream_dict = {f.path: f for f in ps_ds}
+                upstream_dict = {f.path: f for f in ps_us}
+
+                if upstream_dict:
+                    files = list(upstream_dict.keys())
+                    more_commits = [c for c in repo.git.log('--pretty=oneline',
+                                                            c_sha+"..HEAD",
+                                                            "--",
+                                                            *files).splitlines()
+                                    if not c.split()[0] in commits_seen and
+                                    c.split()[1] != 'Merge']
 
                 # Find files in upstream but not in downstream
                 for k in upstream_dict.keys():
@@ -112,11 +132,20 @@ def main(notmuch, *query):
                                 diff_errs.append(fmt.format(mkr, l1, l2))
                             diff_errs.append("")
 
-                if diff_errs:
+                if diff_errs or more_commits:
                     print("{} (upstream {}):".format(sb, c_sha))
+
+                if diff_errs:
                     print("  " + "\n  ".join(diff_errs))
                     print("  " + commit_prefix.replace("\n", "\n  "))
-                    print("\n")
+                    print()
+
+                if more_commits:
+                    print("  Possible fixes on top of this:")
+                    for c in more_commits:
+                        commits_seen.add(c.split()[0])
+                        print("    " + c)
+                    print()
 
             except gitdb.exc.BadName:
                 print("{}:\n  Couldn't find upstream commit {}".format(sb, c_sha))
