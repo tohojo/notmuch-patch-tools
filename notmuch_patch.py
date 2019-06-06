@@ -99,7 +99,7 @@ def get_patches(notmuch, query):
                 m.set_payload(pl, cs)
 
                 patches.append((ver, num, m))
-        patches.sort()
+        patches.sort(key=lambda x: x[:2])
 
         if not patches:
             return
