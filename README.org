@@ -1,0 +1,4 @@
+* Notmuch patch extraction and filtering tools
+
+This repo contains some scripts for extracting patch series from a notmuch mail
+store, and processing them in various ways.
