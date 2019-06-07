@@ -31,7 +31,10 @@ from itertools import zip_longest
 
 # Repo to find upstream commit IDs in
 REPO_PATH = "~/build/linux/"
+END_COMMIT = "v5.0.21"
 
+upstream_re = re.compile(r"^commit ([0-9a-f]{40})", re.MULTILINE)
+stable_re = re.compile(r"(Upstream commit ([0-9a-f]{40})|commit ([0-9a-f]{40}) upstream)", re.I)
 
 def main(notmuch, *query):
     patches = notmuch_patch.get_patches(notmuch, query)
@@ -43,7 +46,7 @@ def main(notmuch, *query):
     # First pass to extract all commit IDs seen in the series
     for p in patches:
         pl = p.get_payload(decode=True).decode("utf-8")
-        m = re.search(r"^commit ([0-9a-f]{40})", pl, re.MULTILINE)
+        m = upstream_re.search(pl, re.MULTILINE)
         if m:
             commits_seen.add(m.group(1))
 
@@ -54,7 +57,7 @@ def main(notmuch, *query):
         ps_ds = unidiff.PatchSet(pl)
 
         # Find a commit ID in message
-        m = re.search(r"^commit ([0-9a-f]{40})", pl, re.MULTILINE)
+        m = upstream_re.search(pl)
         if m:
             try:
                 # Find the commit in upstream and diff it
@@ -68,18 +71,37 @@ def main(notmuch, *query):
                 ps_us = unidiff.PatchSet(diff)
 
                 diff_errs = []
+                more_commits = []
 
                 downstream_dict = {f.path: f for f in ps_ds}
                 upstream_dict = {f.path: f for f in ps_us}
 
                 if upstream_dict:
                     files = list(upstream_dict.keys())
-                    more_commits = [c for c in repo.git.log('--pretty=oneline',
-                                                            c_sha+"..HEAD",
-                                                            "--",
-                                                            *files).splitlines()
-                                    if not c.split()[0] in commits_seen and
-                                    c.split()[1] != 'Merge']
+
+                    # Find commits modifying the same files as possible candidates
+                    for cmsg in repo.git.log('--pretty=%H',
+                                             c_sha+".."+END_COMMIT,
+                                             "--",
+                                             *files).splitlines():
+                        c = repo.commit(cmsg)
+
+                        # Exclude commits we've already seen, and merge commits
+                        if c.hexsha in commits_seen or c.message.startswith("Merge"):
+                            continue
+
+                        commits_seen.add(c.hexsha)
+
+                        # Since we may be searching a stable tree, recursively
+                        # resolve upstream commits from the commit messages
+                        m = stable_re.search(c.message)
+                        if m:
+                            c = repo.commit(m.group(2) or m.group(3))
+                            if c.hexsha in commits_seen:
+                                continue
+                            commits_seen.add(c.hexsha)
+
+                        more_commits.insert(0, f"{c.hexsha} {c.message.splitlines()[0]}")
 
                 # Find files in upstream but not in downstream
                 for k in upstream_dict.keys():
@@ -142,9 +164,7 @@ def main(notmuch, *query):
 
                 if more_commits:
                     print("  Possible fixes on top of this:")
-                    for c in more_commits:
-                        commits_seen.add(c.split()[0])
-                        print("    " + c)
+                    print("  " + "\n  ".join(more_commits))
                     print()
 
             except gitdb.exc.BadName:
