@@ -2,3 +2,14 @@
 
 This repo contains some scripts for extracting patch series from a notmuch mail
 store, and processing them in various ways.
+
+Currently, the scripts included are:
+
+- =notmuch-extract-patch-mbox.py=: Extracts a patch series from a thread and
+  saves it in an mbox file, which can subsequently be applied using =git am=.
+
+- =notmuch-compare-patch-series.py=: Compares a patch series containing
+  backports with the upstream commits each patch refers to. Points out
+  hunk-by-hunk differences in the backported patch, and also suggests possible
+  follow-on fixes from upstream by looking at the git log of the files each
+  patch touches.
